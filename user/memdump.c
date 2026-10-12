@@ -60,6 +60,58 @@ main(int argc, char *argv[])
 void
 memdump(char *fmt, char *data, int len)
 {
-  // Your code here.  `data` holds `len` valid bytes.
+  int pos = 0;   // số byte của data đã dùng
 
+  for(; *fmt; fmt++){
+    char f = *fmt;
+    int need;    // số byte tối thiểu mà ký tự format này cần
+
+    switch(f){
+    case 'i': need = 4; break;
+    case 'p': need = 8; break;
+    case 'h': need = 2; break;
+    case 'c': need = 1; break;
+    case 's': need = 8; break;
+    case 'S': need = 0; break;   // dùng phần còn lại, có thể rỗng
+    default:  continue;          // bỏ qua ký tự format lạ
+    }
+
+    if(len - pos < need){
+      printf("memdump: not enough data for '%c'\n", f);
+      return;
+    }
+
+    // Dùng memmove vào biến cục bộ để tránh đọc lệch alignment
+    // (data + pos có thể không chia hết cho 2/4/8).
+    if(f == 'i'){
+      int v;
+      memmove(&v, data + pos, sizeof(v));
+      printf("%d\n", v);
+      pos += need;
+    } else if(f == 'p'){
+      uint64 v;
+      memmove(&v, data + pos, sizeof(v));
+      printf("%lx\n", v);
+      pos += need;
+    } else if(f == 'h'){
+      short v;
+      memmove(&v, data + pos, sizeof(v));
+      printf("%d\n", (int)v);
+      pos += need;
+    } else if(f == 'c'){
+      printf("%c\n", data[pos]);
+      pos += need;
+    } else if(f == 's'){
+      char *ptr;
+      memmove(&ptr, data + pos, sizeof(ptr));
+      printf("%s\n", ptr);
+      pos += need;
+    } else {  // 'S': in đến '\0' hoặc hết len, tùy cái nào đến trước
+      while(pos < len && data[pos] != '\0'){
+        printf("%c", data[pos]);
+        pos++;
+      }
+      printf("\n");
+    }
+  }
 }
