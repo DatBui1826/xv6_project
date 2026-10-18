@@ -101,5 +101,7 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  uint interpose_mask;         // Mask for interposed system calls  
+  uint interpose_mask;         // Mask for interposed system calls
+  char interpose_path[MAXPATH];    // Path for interposed system calls  
+  int interpose_set;          // Flag to indicate if interpose_path is set
 };

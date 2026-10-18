@@ -13,7 +13,16 @@ sys_interpose(void)
   int mask;
   argint(0, &mask);
   struct proc *p = myproc();
+  char path[MAXPATH];
+  if (p->interpose_set !=0) {
+    return -1; // interpose_path is already set
+  }
+  if (argstr(1, path, MAXPATH) < 0) {
+    return -1;
+  }
+  safestrcpy(p->interpose_path, path, MAXPATH);
   p->interpose_mask = mask;
+  p->interpose_set = 1; // set the flag to indicate interpose_path is set
   return 0;
 }
 

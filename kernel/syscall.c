@@ -144,8 +144,14 @@ syscall(void)
   num = p->trapframe->a7;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     if(num < 32 && p->interpose_mask & (1U<<num)){
-      p->trapframe->a0 = -1;
-      return;
+      char path[MAXPATH];
+      if ((num != SYS_open && num != SYS_exec) ||
+          strncmp(p->interpose_path, "-", MAXPATH) == 0 ||
+          argstr(0, path, sizeof(path)) < 0 ||
+          strncmp(path, p->interpose_path, MAXPATH) != 0) {
+        p->trapframe->a0 = -1;
+        return;
+      }
     }
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
