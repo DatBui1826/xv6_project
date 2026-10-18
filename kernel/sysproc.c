@@ -8,6 +8,16 @@
 #include "vm.h"
 
 uint64
+sys_interpose(void)
+{
+  int mask;
+  argint(0, &mask);
+  struct proc *p = myproc();
+  p->interpose_mask = mask;
+  return 0;
+}
+
+uint64
 sys_exit(void)
 {
   int n;

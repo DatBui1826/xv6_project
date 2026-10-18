@@ -124,6 +124,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->interpose_mask = 0; // Initialize interpose_mask to 0
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -274,7 +275,7 @@ kfork(void)
     return -1;
   }
   np->sz = p->sz;
-
+  np->interpose_mask = p->interpose_mask; // Copy interpose_mask from parent to child
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
