@@ -3,6 +3,40 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
+#include "kernel/stat.h"
+#include "kernel/fs.h"
+
+#define MAX_HISTORY 10
+char history[MAX_HISTORY][100]; // Mảng 2 chiều lưu 10 lệnh, mỗi lệnh tối đa 100 ký tự
+int history_count = 0; // Số lệnh đã lưu
+int current_history = 0; // Vị trí đang duyệt tới, dành cho phím mũi tên
+
+void save_history(char *buf) {
+  // Không lưu các dòng trống hoặc lệnh gọi lại bằng dấu !
+  if(buf[0] == '\n' || buf[0] == '\0' || buf[0] == '!') return;
+
+  char temp[100];
+  strcpy(temp, buf);
+
+  // Xóa dấu xuống dòng '\n' ở cuối câu để in ra cho đẹp
+  int len = strlen(temp);
+  if(len > 0 && temp[len-1] == '\n') {
+    temp[len-1] = '\0';
+  }
+
+  // Dịch mảng lên nếu đã chứa đủ 10 lệnh
+  if(history_count == MAX_HISTORY) {
+    for(int i = 0; i < MAX_HISTORY - 1; i++) {
+      strcpy(history[i], history[i+1]);
+    }
+    strcpy(history[MAX_HISTORY - 1], temp);
+  } else {
+    strcpy(history[history_count], temp);
+    history_count++;
+  }
+
+  current_history = history_count; // Dùng cho phím mũi tên sau này
+}
 
 // Parsed command representation
 #define EXEC  1
@@ -131,14 +165,136 @@ runcmd(struct cmd *cmd)
   exit(0);
 }
 
+// Hàm hỗ trợ tự động điền tên file khi nhấn Tab
+void autocomplete(char *buf, int *len) {
+  // Tìm từ cuối mà người dùng đang gõ dở
+  int start = *len;
+  while (start > 0 && buf[start - 1] != ' ') {
+    start--;
+  }
+  int prefix_len = *len - start;
+  if (prefix_len == 0) return; // Chưa gõ chữ nào thì không điền
+
+  // Mở thư mục hiện tại (".")
+  int fd = open(".", 0); // 0 là cờ O_RDONLY (chỉ đọc)
+  if (fd < 0) return;
+
+  struct dirent de;
+  char match[16]; // Tên file trong xv6 dài tối đa 14 ký tự (DIRSIZ)
+  int match_count = 0;
+
+  // Đọc từng file trong thư mục
+  while (read(fd, &de, sizeof(de)) == sizeof(de)) {
+    if (de.inum == 0) continue; // Bỏ qua các file đã bị xóa
+
+    // Kiểm tra xem tên file có bắt đầu bằng cụm từ đang gõ không
+    int is_match = 1;
+    for (int j = 0; j < prefix_len; j++) {
+      if (de.name[j] != buf[start + j]) {
+        is_match = 0;
+        break;
+      }
+    }
+
+    // Khớp thì lưu lại tên file đó
+    if (is_match) {
+      memmove(match, de.name, 14);
+      match[14] = '\0'; // Đảm bảo chuỗi kết thúc đúng cách
+      match_count++;
+    }
+  }
+  close(fd);
+
+  // Nếu chỉ đúng 1 file khớp, tự động điền nốt phần còn thiếu
+  if (match_count == 1) {
+    int rest_len = strlen(match) - prefix_len;
+    for (int j = 0; j < rest_len; j++) {
+      buf[*len] = match[prefix_len + j];
+      fprintf(2, "%c", buf[*len]); // In chữ đó ra màn hình
+      (*len)++;
+    }
+  }
+}
+
 int
 getcmd(char *buf, int nbuf)
 {
-  write(2, "$ ", 2);
+  struct stat st;
+
+  // Dùng fstat để kiểm tra file descriptor 0 (Standard Input)
+  // Nếu loại file st.type là T_DEVICE, tức là đang nhập trực tiếp từ console
+  // thì mới in dấu "$ "
+  if(fstat(0, &st) == 0 && st.type == T_DEVICE) {
+    fprintf(2, "$ ");
+  }
+
   memset(buf, 0, nbuf);
-  gets(buf, nbuf);
-  if (buf[0] == 0) // EOF
-    return -1;
+  int i = 0;
+
+  // Vòng lặp đọc từng ký tự
+  while(i < nbuf - 1) {
+    char c;
+    // Đọc 1 ký tự từ bàn phím
+    if(read(0, &c, 1) < 1) break;
+
+    if(c == '\n' || c == '\r') {
+      buf[i++] = '\n';
+      break;
+    }
+    // Phím Esc = ASCII 27 - bắt đầu tổ hợp phím mũi tên
+    else if (c == 27) {
+      char seq[2];
+      read(0, &seq[0], 1);
+      read(0, &seq[1], 1);
+
+      if(seq[0] == '[') {
+        if(seq[1] == 'A') { // phím UP
+          if(current_history > 0) {
+            current_history--;
+            // Xóa dòng lệnh hiện tại trên console
+            while(i > 0) { fprintf(2, "\b \b"); i--; }
+            // Nạp và in lệnh cũ ra
+            strcpy(buf, history[current_history]);
+            i = strlen(buf);
+            fprintf(2, "%s", buf);
+          }
+        }
+        else if(seq[1] == 'B') { // phím DOWN
+          if(current_history < history_count - 1) {
+            current_history++;
+            while(i > 0) { fprintf(2, "\b \b"); i--; }
+            strcpy(buf, history[current_history]);
+            i = strlen(buf);
+            fprintf(2, "%s", buf);
+          }
+          else if(current_history == history_count - 1) {
+            // Khi duyệt xuống đáy thì xóa trắng dòng
+            current_history++;
+            while(i > 0) { fprintf(2, "\b \b"); i--; }
+            buf[0] = '\0';
+            i = 0;
+          }
+        }
+      }
+    }
+    // phím Backspace (8 hoặc 127)
+    else if (c == '\b' || c == 127) {
+      if(i > 0) {
+        i--;
+        // Kernel của xv6 đã tự xử lý xóa hiển thị, ta chỉ lùi biến i
+      }
+    }
+    // phím Tab (9)
+    else if (c == '\t') {
+      autocomplete(buf, &i);
+    }
+    // Các ký tự bình thường
+    else {
+      buf[i++] = c;
+    }
+  }
+
+  if(buf[0] == 0) return -1;
   return 0;
 }
 
@@ -163,6 +319,44 @@ main(void)
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
+
+    // Bắt lệnh in danh sách lịch sử
+    if (strcmp(cmd, "history\n") == 0) {
+      save_history(cmd); // Vẫn lưu chuỗi "history" vào bộ nhớ
+      for (int i = 0; i < history_count; i++) {
+        fprintf(2, "%d %s\n", i + 1, history[i]);
+      }
+      continue;
+    }
+
+    // 2. Xử lý gọi lại lệnh cũ !! hoặc !n
+    if (cmd[0] == '!') {
+      int idx = -1;
+      if (cmd[1] == '!' && cmd[2] == '\n') {
+        idx = history_count - 1; // !!: gọi lại lệnh cuối cùng
+      } else {
+        int n = atoi(cmd + 1);   // !n: lấy số n do người dùng nhập
+        idx = n - 1;             // Chỉ số mảng bắt đầu từ 0
+      }
+
+      // Nếu chỉ số hợp lệ, nạp lại lệnh từ bộ nhớ
+      if (idx >= 0 && idx < history_count) {
+        fprintf(2, "%s\n", history[idx]); // In lệnh ra trước khi chạy
+        strcpy(cmd, history[idx]);        // Copy ngược lệnh cũ đè vào cmd
+
+        // Thêm \n để shell phân tích đúng ngữ pháp
+        int len = strlen(cmd);
+        cmd[len] = '\n';
+        cmd[len + 1] = '\0';
+      } else {
+        fprintf(2, "cannot find command in history\n");
+        continue;
+      }
+    }
+
+    // Lưu lệnh đang chạy vào lịch sử
+    save_history(cmd);
+
     if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd) - 1] = 0; // chop \n

@@ -170,13 +170,23 @@ consoleintr(int c)
     if (c != 0 && cons.e - cons.r < INPUT_BUF_SIZE) {
       c = (c == '\r') ? '\n' : c;
 
-      // echo back to the user.
-      consputc(c);
+      // SPhát hiện chuỗi phím mũi tên (bắt đầu bằng mã 27/Esc)
+      static int is_arrow = 0;
+      if (c == 27) is_arrow = 1;
+
+      // Chỉ in ra màn hình nếu không phải Tab hoặc đang nhấn mũi tên
+      if (!is_arrow && c != '\t') {
+        consputc(c);
+      }
+
+      // Đặt lại cờ khi chuỗi mũi tên kết thúc (A, B, C, D)
+      if (is_arrow && c >= 'A' && c <= 'D') is_arrow = 0;
 
       // store for consumption by consoleread().
       cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
 
-      if (c == '\n' || c == C('D') || cons.e - cons.r == INPUT_BUF_SIZE) {
+      // Mở khóa đánh thức Shell ngay khi có Tab, Esc hoặc các mã mũi tên
+      if (c == '\n' || c == C('D') || c == '\t' || c == 27 || c == '[' || (c >= 'A' && c <= 'D') || cons.e - cons.r == INPUT_BUF_SIZE) {
         // wake up consoleread() if a whole line (or end-of-file)
         // has arrived.
         cons.w = cons.e;
