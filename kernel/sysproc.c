@@ -86,6 +86,7 @@ sys_pause(void)
     acquire(&tickslock);
   }
   release(&tickslock);
+  backtrace();
   return 0;
 }
 
