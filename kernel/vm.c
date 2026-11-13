@@ -169,6 +169,8 @@ vmprint_rec(pagetable_t pagetable, int level, uint64 va_base)
       if(pte & PTE_W) printk("W");
       if(pte & PTE_X) printk("X");
       if(pte & PTE_U) printk("U");
+      if (level == 1)
+        printk(" superpage");
       printk("\n");
     } else {
       printk("\n");
@@ -186,6 +188,83 @@ vmprint(pagetable_t pagetable)
 }
 #endif
 
+static pte_t *
+kvmwalk(pagetable_t pagetable, uint64 va, int target_level)
+{
+  // Kiểm tra bảo vệ của ta:
+  // địa chỉ phải nằm trong phạm vi xv6 hỗ trợ;
+  // helper này chỉ phục vụ ánh xạ cấp 0 hoặc cấp 1.
+  if (va >= MAXVA || target_level < 0 || target_level > 1)
+    panic("kvmwalk");
+
+  // Sv39 bắt đầu từ L2.
+  // Dừng trước khi đi xuống dưới cấp cần tìm.
+  // target_level = 1 đáp ứng nhu cầu đặt PTE lá ở L1 của đề.
+  for (int level = 2; level > target_level; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+
+    if (*pte & PTE_V) {
+      // Đây là kiểm tra bảo vệ:
+      // PTE lá trỏ đến vùng nhớ, không phải bảng trang con.
+      // Không được diễn giải vùng đó như một bảng trang.
+      if (PTE_LEAF(*pte))
+        panic("kvmwalk: leaf");
+
+      // PTE trung gian hợp lệ: đi xuống bảng trang con.
+      pagetable = (pagetable_t)PTE2PA(*pte);
+    } else {
+      // Chưa có bảng con: cấp phát một trang bảng trang 4 KiB.
+      pagetable_t child = (pagetable_t)kalloc();
+      if (child == 0)
+        return 0;
+
+      // Tất cả PTE trong bảng mới ban đầu đều không hợp lệ.
+      memset(child, 0, PGSIZE);
+
+      // Tạo PTE trung gian: chỉ bật V, chưa bật R/W/X.
+      *pte = PA2PTE(child) | PTE_V;
+      pagetable = child;
+    }
+  }
+
+  // Trả về Ô PTE tại cấp đích.
+  // Mapper sẽ kiểm tra và ghi ánh xạ vào ô này sau.
+  return &pagetable[PX(target_level, va)];
+}
+
+static int
+kvmmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  if (va % PGSIZE != 0)
+    panic("kvmmappages: va not aligned");
+  if (pa % PGSIZE != 0)
+    panic("kvmmappages: pa not aligned");
+  if (size == 0   || size % PGSIZE != 0)
+    panic("kvmmappages: size not aligned");
+
+  while  (size > 0) {
+    int level = 0 ;
+    uint64 step = PGSIZE;
+
+    if (va % SUPERPGSIZE == 0 &&
+        pa % SUPERPGSIZE == 0 &&
+        size >= SUPERPGSIZE) {
+      level = 1;
+      step = SUPERPGSIZE;
+    }
+    pte_t *pte = kvmwalk(pagetable, va, level);
+    if (pte == 0)
+      return -1;
+    if (*pte & PTE_V)
+      panic("kvmmappages: remap");
+    *pte = PA2PTE(pa) | perm | PTE_V;
+    va += step;
+    pa += step;
+    size -= step;
+  }
+  return 0;
+}
+
 
 // add a mapping to the kernel page table.
 // only used when booting.
@@ -193,7 +272,7 @@ vmprint(pagetable_t pagetable)
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+  if (kvmmappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 
