@@ -140,11 +140,19 @@ endif
 
 LDFLAGS = -z max-page-size=4096
 
-$K/kernel: $(OBJS) $(OBJS_KCSAN) $K/kernel.ld
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
+$K/symtab_empty.c: gen_symtab.py
+	python3 gen_symtab.py --empty $K/symtab_empty.c
+
+$K/kernel.pass1: $(OBJS) $(OBJS_KCSAN) $K/symtab_empty.o $K/kernel.ld
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel.pass1 $(OBJS) $(OBJS_KCSAN) $K/symtab_empty.o
+
+$K/symtab.c: $K/kernel.pass1 gen_symtab.py
+	python3 gen_symtab.py $(OBJDUMP) $K/kernel.pass1 $K/symtab.c
+
+$K/kernel: $(OBJS) $(OBJS_KCSAN) $K/symtab.o $K/kernel.ld
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN) $K/symtab.o
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
-$(OBJS): EXTRAFLAG := $(KCSANFLAG)
 
 $K/%.o: $K/%.c conf/lab.mk
 	$(CC) $(CFLAGS) $(EXTRAFLAG) -c -o $@ $<

@@ -134,16 +134,42 @@ printk(char *fmt, ...)
   return 0;
 }
 
+static int
+lookup_ksym(uint64 addr)
+{
+  int lo = 0;
+  int hi = ksyms_count - 1;
+  int best = -1;
+
+  while (lo <= hi) {
+    int mid = lo + (hi - lo) / 2;
+    if (ksyms[mid].addr <= addr) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
 void
 backtrace(void)
 {
-  uint64 fp = r_fp();
-  uint64 bottom = PGROUNDDOWN(fp);
-  uint64 top = bottom + PGSIZE;
   printk("backtrace:\n");
-  while (fp != 0 && fp >= bottom + 16 && fp < top) {
+  uint64 fp = r_fp();
+  uint64 top = PGROUNDUP(fp);
+
+  while (fp < top) {
     uint64 ra = *(uint64 *)(fp - 8);
-    printk("%p\n", (void *)ra);
+    // Lùi 2 byte để trỏ đúng vào lệnh gọi (call/jal/c.jalr) thay vì lệnh kế tiếp
+    int idx = lookup_ksym(ra >= 2 ? ra - 2 : ra);
+    if (idx >= 0) {
+      printk("%s\n", ksym_funcs[ksyms[idx].func_idx]);
+      printk("%s:%d\n", ksym_files[ksyms[idx].file_idx], ksyms[idx].line);
+    } else {
+      printk("%p\n", (void *)ra);
+    }
     fp = *(uint64 *)(fp - 16);
   }
 }
