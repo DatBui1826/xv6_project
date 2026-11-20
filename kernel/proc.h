@@ -101,4 +101,9 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int alarm_interval;          // Chu kỳ alarm (số tick), 0 = tắt
+  uint64 alarm_handler;        // Địa chỉ hàm handler trong user space
+  int alarm_ticks;             // Số tick đã đếm được
+  int alarm_active;            // Cờ = 1 khi đang chạy handler (chống gọi đè)
+  struct trapframe alarm_tf;   // Bản sao lưu toàn bộ thanh ghi trước khi nhảy vào handler
 };
